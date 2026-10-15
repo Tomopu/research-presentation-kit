@@ -1,0 +1,13 @@
+.venv/
+skills/*/.venv
+__pycache__/
+.DS_Store
+~$*
+# 本人の過去資料（各環境で置く）
+skills/seminar-slides/assets/reference/*.pptx
+skills/seminar-slides/assets/reference/*.pdf
+# 生成物
+*.mp4
+*_build/
+skills/explainer-video/examples/*/build/
+qa/
