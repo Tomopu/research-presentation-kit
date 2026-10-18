@@ -96,6 +96,8 @@ def lint(path):
                     A, B = bbox(texts[a]), bbox(texts[b])
                     ox = min(A[2], B[2]) - max(A[0], B[0])
                     oy = min(A[3], B[3]) - max(A[1], B[1])
+                    if texts[a].name.startswith("FieldsetLabel") or texts[b].name.startswith("FieldsetLabel"):
+                        continue        # fieldset() の見出しは枠の上辺に重ねる作り
                     if ox > 0.3 and oy > 0.12:
                         msgs.append(("WARN", "文字の重なりの疑い: %r と %r" % (texts[a].text_frame.text[:20], texts[b].text_frame.text[:20])))
             # 6. 箱の使いすぎ（Claude の癖。本人の修正 2026-10-15：箇条書きは箱で囲まない）

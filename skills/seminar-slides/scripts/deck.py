@@ -469,7 +469,7 @@ class Slide:
         self.box(x, y, w, h, body, fill=None, line=color, lw=2.25, size=size, radius=0.10,
                  ins=(0.15, 0.06, 0.15, 0.06), spacing=1.5)
         lw = _cells(_plain(label)) * 0.15 * label_size / 20 + 0.5
-        self._sp(x + 0.27, y - 0.30, lw, 0.54, fill="FFFEFF", wrap=False,
+        self._sp(x + 0.27, y - 0.30, lw, 0.54, fill="FFFEFF", wrap=False, tag="FieldsetLabel",
                  body=para(label, label_size, color, True, "ctr"), txbox=True, anchor="ctr")
         return y + h
 
