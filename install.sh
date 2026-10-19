@@ -7,6 +7,7 @@
 #   bash install.sh                       # python3 を使う
 #   PYTHON=python3.12 bash install.sh
 #   CLAUDE_SKILLS_DIR=/path/to/skills bash install.sh
+# リポジトリのフォルダを移したときも、新しい場所でもう一度実行すればリンクが張り直される
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="${PYTHON:-python3}"
@@ -15,8 +16,9 @@ SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 "$PYTHON" -c 'import sys; assert sys.version_info >= (3, 10), "Python 3.10 以上が要る"'
 echo "== Python の環境: $ROOT/.venv"
 [ -x "$ROOT/.venv/bin/python" ] || "$PYTHON" -m venv "$ROOT/.venv"
-"$ROOT/.venv/bin/pip" install -q --upgrade pip
-"$ROOT/.venv/bin/pip" install -q -r "$ROOT/requirements.txt"
+# pip は python -m pip で呼ぶ（リポジトリのフォルダを移すと .venv/bin/pip の先頭行のパスが古いままになるため）
+"$ROOT/.venv/bin/python" -m pip install -q --upgrade pip
+"$ROOT/.venv/bin/python" -m pip install -q -r "$ROOT/requirements.txt"
 
 echo "== スキルのリンク: $SKILLS_DIR"
 mkdir -p "$SKILLS_DIR"

@@ -92,7 +92,7 @@ def math_yomi(s):
                 out.append(f"{math_yomi(b)}ぶんの{math_yomi(a)}")
             elif name == "sqrt":
                 a, i = _group(s, i)
-                out.append(f"ルート、{math_yomi(a)}、")
+                out.append(f"ルート {math_yomi(a)}")
             elif name in ACCENT:
                 a, i = _group(s, i)
                 out.append(f"{math_yomi(a)}{ACCENT[name]}")
@@ -162,8 +162,12 @@ def display(text):
     return _RUBY.sub(lambda m: m.group(1), text)
 
 
-def yomi(text, lexicon=None):
-    """読み上げ用の文：{表記|よみ} はよみ、$...$ は数式の読み、残りは辞書で置き換える。"""
+def yomi(text, lexicon=None, pause="、"):
+    """読み上げ用の文：{表記|よみ} はよみ、$...$ は数式の読み、残りは辞書で置き換える。
+
+    pause は数式の前に入れる間（say なら "[[slnc 250]]"）。**数式の後には間を入れない。**
+    数式の後で区切ると、続く「です」「になる」などが 1 語として読み直され、「でぇ〜す」と伸びるため
+    （2026-10-19 に音声の波形で確かめた：間の後の「です」は 0.33 秒、つなげると約 0.15 秒）。"""
     lex = load_lexicon(lexicon) if not isinstance(lexicon, dict) or "__loaded__" not in lexicon else lexicon
     text = _RUBY.sub(lambda m: "\x00" + m.group(2) + "\x01", text)       # 読みを指定した所は辞書を当てない
     parts = re.split(r"(\$[^$]+\$|\x00[^\x01]*\x01)", text)
@@ -172,7 +176,9 @@ def yomi(text, lexicon=None):
     out = []
     for p in parts:
         if p.startswith("$") and p.endswith("$") and len(p) > 1:
-            out.append("、" + math_yomi(p[1:-1]) + "、")
+            r = math_yomi(p[1:-1]).strip("、 ")
+            # 1〜2 語の短い記号（「腕 k」の k など）の前には間を入れない
+            out.append(("\x02" if len(r.split()) >= 3 or len(r) >= 8 else "") + r)
         elif p.startswith("\x00"):
             out.append(p[1:-1])
         elif pat:
@@ -187,6 +193,10 @@ def yomi(text, lexicon=None):
     s = re.sub(r"、+", "、", s)
     s = re.sub(r"、([。、])", r"\1", s)
     s = re.sub(r"。、", "。", s)
+    # 数式の前の間：文頭なら入れない、直前の読点は間に置き換える
+    s = re.sub(r"^\x02", "", s)
+    s = re.sub(r"(?<=[。])\x02", "", s)
+    s = re.sub(r"、?\x02", pause, s)
     return s.strip("、 ").strip()
 
 

@@ -54,7 +54,7 @@ SR = 22050
 FFMPEG = os.environ.get("FFMPEG") or shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
 TTS = os.environ.get("VIDEO_TTS", "say" if sys.platform == "darwin" else "silent")
 VOICE = os.environ.get("VIDEO_VOICE", "Kyoko")
-RATE = int(os.environ.get("VIDEO_RATE", "205"))
+RATE = int(os.environ.get("VIDEO_RATE", "190"))   # 2026-10-19 本人が聞き比べて 190 を選んだ
 LUALATEX = shutil.which("lualatex")
 PDFTOCAIRO = shutil.which("pdftocairo")
 # 字幕と tex() を LaTeX で組むか（lualatex と pdftocairo があれば既定で組む。VIDEO_TEX=0 で matplotlib の mathtext に戻す）
@@ -317,14 +317,15 @@ def prepare(scenes, lexicon=None):
     字幕だけなら読み上げは yomi() で作る（$数式$ の読み、{表記|よみ}、lexicon.tsv と lexicon の辞書）。
     (字幕, None) も同じ。作例ではモジュールの先頭で SCENES = prepare([...]) とする（並列の作業プロセスでも同じになる）。"""
     lex = load_lexicon(lexicon)
+    pause = os.environ.get("VIDEO_PAUSE", "[[slnc 250]]" if TTS == "say" else "、")   # 数式の前の間
     for sc in scenes:
         new = []
         for ln in sc["lines"]:
             if isinstance(ln, str):
-                new.append((display(ln), yomi(ln, lex)))
+                new.append((display(ln), yomi(ln, lex, pause)))
             else:
                 cap, sp = ln
-                new.append((display(cap), sp if sp else yomi(cap, lex)))
+                new.append((display(cap), sp if sp else yomi(cap, lex, pause)))
         sc["lines"] = new
     return scenes
 

@@ -30,8 +30,8 @@ Linux では `apt install python3-venv ffmpeg poppler-utils imagemagick libreoff
 ### 2. clone してインストール
 
 ```bash
-git clone https://github.com/Tomopu/research-presentation-kit.git ~/develop/research-presentation-kit
-cd ~/develop/research-presentation-kit
+git clone https://github.com/Tomopu/research-presentation-kit.git ~/others/develop/research-presentation-kit
+cd ~/others/develop/research-presentation-kit
 bash install.sh
 ```
 
@@ -49,7 +49,7 @@ bash install.sh
 
 ```bash
 cp 論文ゼミ_泉0421.pptx 泉知成_修論中間発表スライド_完成.pptx スライドデザイン変更点まとめ.pptx \
-   ~/develop/research-presentation-kit/skills/seminar-slides/assets/reference/
+   ~/others/develop/research-presentation-kit/skills/seminar-slides/assets/reference/
 ```
 
 置かなくても、`paste()` 以外（部品で描く図・数式・表・検査）はすべて動く。詳しくは
