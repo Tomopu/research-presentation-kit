@@ -5,7 +5,9 @@
 | パス | 内容 |
 |---|---|
 | `SKILL.md` | 中身の決め方・台本・画面・確認の手順（Claude が読む本体） |
-| `scripts/video.py` | エンジン（台本と描画関数 → 音声・コマ・mp4。色と描画の部品） |
+| `scripts/video.py` | エンジン（台本と描画関数 → 音声・コマ・mp4。色と描画の部品、LaTeX の組版 `tex()`） |
+| `scripts/yomi.py` | 字幕（`$数式$`・`{表記\|よみ}` を含む）から読み上げの文を作る |
+| `scripts/lexicon.tsv` | 専門用語・人名の読みの辞書 |
 | `examples/thompson_sampling/` | 作例 1：Thompson Sampling と Selfish TS（`ts_explainer.py`、2 人の軌跡の再現 `toy.py`、500 試行の集計 `data/`） |
 | `examples/ucb_klucb/` | 作例 2：UCB と KL-UCB（`ucb_explainer.py`、比較のシミュレーション `ucb_sim.py`） |
 

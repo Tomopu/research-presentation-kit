@@ -8,7 +8,7 @@ description: 研究の概念（アルゴリズム・理論・実験結果）を�
 泉 知成の依頼で作った 2 本（Thompson Sampling と Selfish TS、UCB と KL-UCB）で確立した手順。
 本人の評価は「すごくわかりやすい」（2026-10-15）。作例は `examples/` にある。
 
-- エンジン：`scripts/video.py`（台本と描画関数を渡すと mp4 になる。docstring に使い方）
+- エンジン：`scripts/video.py`（台本と描画関数を渡すと mp4 になる。docstring に使い方）、`scripts/yomi.py`（字幕から読みを作る）、`scripts/lexicon.tsv`（専門用語の読みの辞書）
 - 作例：`examples/thompson_sampling/ts_explainer.py`（9 場面・5 分 16 秒）、`examples/ucb_klucb/ucb_explainer.py`（9 場面・5 分 8 秒）
 - Python：`~/.claude/skills/explainer-video/.venv/bin/python`（リポジトリの `install.sh` が作る）。ffmpeg が要る
 
@@ -26,20 +26,31 @@ description: 研究の概念（アルゴリズム・理論・実験結果）を�
 
 ## 2. 台本の書き方
 
-`SCENES = [dict(title=..., lines=[(字幕, 読み上げ), ...]), ...]`。字幕と読み上げは**別に書く**。
+`SCENES = prepare([dict(title=..., lines=[...]), ...], lexicon={...})`。lines の要素は**字幕だけの文字列**を基本にする
+（読み上げは `scripts/yomi.py` が字幕から作る）。読みが不自然な文だけ `(字幕, 読み上げ)` の組で書く。
 
-- 字幕：画面に出す正しい表記（`Thompson Sampling`、`√(2 log t ／ 引いた回数)`、`R-SKL`）
-- 読み上げ：Kyoko が正しく読める表記。英語の固有名詞はカタカナ（トンプソン・サンプリング、アウアー、ガリビエ）、
-  略語は 1 文字ずつ（アール・エス・ケー・エル、ケーエル・ユーシービー）、数式は言葉（ルート、2ログ t、割る、引いた回数）、
-  区切りに読点を多めに打つ（間ができて聞きやすい）
+- **数式は字幕の中に `$...$`（LaTeX）で書く。** 画面では LaTeX で組まれ、声は数式の読みの規則で読まれる
+  （`\frac{a}{b}`→「b ぶんの a」、`x^2`→「x の 2 乗」、`N_k`→「エヌ ケー」、`\hat\mu`→「ミューハット」、`\ln`→「ログ」、
+  `\le`→「以下」、`O(\cdot)`→「オーダー」、ギリシャ文字はカタカナ）。`\sqrt{2 \ln t / N_k}` のように、読みやすい形で書く
+- **読みの指定は `{表記|よみ}`。** 画面には表記、声にはよみ（例：`{漸近最適|ぜんきんさいてき}`、`{R-SKL|アール・エス・ケー・エル}`）
+- **専門用語の読みは辞書 `scripts/lexicon.tsv`**（表記<TAB>よみ。長い語から先に当てる）。動画ごとの追加は `prepare(..., lexicon={...})`。
+  新しい固有名詞（著者名・手法名・会議名）が出たら、まず辞書に足す
+- 長い数式（定義式など）は読み上げに向かないので、`(字幕, 読み上げ)` で意味を言葉にする
+  （例：字幕 `$N_k \mathrm{KL}(\hat\mu_k, q) \le \ln t$ を満たす最大の $q$`、読み「引いた回数かける、平均からキューまでの KL が、ログ ティー以下になる、最大のキュー」）
 - 日本語の文体：「なので」でなく「ため」、数は「約 180」のように丸めて言う
+- **書き出す前に `python script.py speech` で全文の読みを見て、おかしい読みを辞書か `{表記|よみ}` で直す。**
+  気になる文は `python script.py listen 場面 文` で聞く
 
 ## 3. 画面の作り方
 
 `draw(fig, t, cues, data)` を場面ごとに書く。`i = which(cues, t)` が読んでいる文の番号、
 `prog(cues, i, t)` がその文の進み具合（0〜1）。**画面は読んでいる文に合わせて変える**（文 2 で軸が出る、文 4 で 1 ステップずつ動く、など）。
 
-- 土台は `frame_base(fig, タイトル, 字幕)`：左上に紺のタイトル、下に字幕の帯（D9DBE8）。字幕は全角幅で自動で折り返す
+- 土台は `frame_base(fig, タイトル, 字幕)`：左上に紺のタイトル、下に字幕の帯（D9DBE8）。**字幕は LaTeX（lualatex）で組む**
+- **図の中の数式は `tex(fig, x, y, "...$数式$...", size, color, ha, va)` か `ftext(...)`**（`$` を含めば LaTeX、含まなければ fig.text）。
+  `panel()` の行も `$` を含めば LaTeX で組む。組版は 1 回 2〜3 秒かかり、結果は `~/.cache/explainer-video/tex/` に保存して使い回す。
+  **毎コマ数字が変わる文（「時刻 t = 123」）には使わない**（fig.text で書く）
+- 軸のラベル・凡例・軸の中の注記は matplotlib の mathtext（Computer Modern の書体）のまま
 - 色はスライドと同じ（紺 0D114A、赤 D14B46、緑 196723、黄 F6EAC3、淡い紺 D9DBE8）。1 場面に色の意味を 3 つまで
 - 動き：1 ステップずつ見せる → 早送り（`step = 8 * (1000/8) ** p` のように指数的に進める）→ 結果で止める
 - 右に説明欄（`panel()`）を置くときは、図と重ならない幅にする（x 0.67〜0.97）
@@ -49,6 +60,8 @@ description: 研究の概念（アルゴリズム・理論・実験結果）を�
 ## 4. 確かめてから書き出す
 
 ```bash
+$PY script.py speech                        # 全文の字幕と読みを並べて表示（読みの確認）
+$PY script.py listen 3 2                    # 場面 3 の文 2 を読み上げて聞く
 VIDEO_TTS=silent $PY script.py preview      # 無音で各文の終わりのコマを PNG に（速い）
 $PY script.py preview 3 5                   # 本物の声の長さで場面 3・5 を確かめる
 $PY script.py                               # 全場面を並列に書き出してつなぐ
@@ -63,6 +76,7 @@ $PY script.py 2                             # 場面 2 だけ作り直してつ�
 - 送るときは長さ（ffprobe）と場面の一覧を添える
 
 ## 5. 環境
+- LaTeX：TeX Live の lualatex（luatexja、原ノ味フォント）と poppler の pdftocairo。なければ `VIDEO_TEX=0` 相当で mathtext に戻る
 
 - TTS：`VIDEO_TTS=say`（macOS の既定、声は `VIDEO_VOICE=Kyoko`、速さ `VIDEO_RATE=205`）、`espeak`（espeak-ng。日本語は不自然）、
   `silent`（無音。配置の確認用）。Linux で本番の声が要るなら、外部の TTS で wav を作り `video.tts()` を差し替える

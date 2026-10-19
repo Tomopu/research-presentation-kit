@@ -18,16 +18,22 @@
 コマンド：`python script.py`（全部）、`python script.py 3 5`（場面 3 と 5 だけ作り直してつなぐ）、
 `python script.py preview [場面...]`（各文の終わりのコマを PNG にして配置を確かめる）。
 
+字幕は LaTeX（lualatex）で組む。台本の文には $数式$ と {表記|よみ} を書ける。読み上げの文を省くと
+yomi.py が字幕から作る（数式の読み・専門用語の辞書 lexicon.tsv）。図の中の数式は tex() / ftext() で置く。
+`python script.py speech [場面...]` で字幕と読みを並べて確かめ、`python script.py listen 場面 [文]` で聞く。
+
 TTS は環境変数 VIDEO_TTS で選ぶ：say（macOS、既定。声は VIDEO_VOICE、既定 Kyoko）、
 espeak（espeak-ng。日本語の質は低い）、silent（無音。文字数から長さを見積もる。配置の確認用）。
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import wave
 from concurrent.futures import ProcessPoolExecutor
 
@@ -49,6 +55,13 @@ FFMPEG = os.environ.get("FFMPEG") or shutil.which("ffmpeg") or "/opt/homebrew/bi
 TTS = os.environ.get("VIDEO_TTS", "say" if sys.platform == "darwin" else "silent")
 VOICE = os.environ.get("VIDEO_VOICE", "Kyoko")
 RATE = int(os.environ.get("VIDEO_RATE", "205"))
+LUALATEX = shutil.which("lualatex")
+PDFTOCAIRO = shutil.which("pdftocairo")
+# 字幕と tex() を LaTeX で組むか（lualatex と pdftocairo があれば既定で組む。VIDEO_TEX=0 で matplotlib の mathtext に戻す）
+USE_TEX = bool(LUALATEX and PDFTOCAIRO) and os.environ.get("VIDEO_TEX", "1") != "0"
+TEX_CACHE = os.environ.get("VIDEO_TEX_CACHE", os.path.expanduser("~/.cache/explainer-video/tex"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from yomi import yomi, display, load_lexicon  # noqa: E402
 
 # 色（seminar-slides と同じ値）
 NAVY, INK, GRAY, LIGHT = "#0D114A", "#1C1F28", "#7F7F7F", "#D9DBE8"
@@ -96,6 +109,109 @@ def wrap_ja(text, width):
     return out
 
 
+# ------------------------------------------------------------------ LaTeX の組版
+_TEX_MEM = {}
+_TEX_HEAD = r"""\documentclass[border=1pt%s]{standalone}
+\usepackage{luatexja-fontspec}
+\setmainjfont[BoldFont=HaranoAjiGothic-Bold]{HaranoAjiGothic-Regular}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{xcolor}
+\renewcommand{\familydefault}{\sfdefault}
+%s
+\begin{document}
+"""
+
+
+def _tex_escape(text):
+    """数式の外の文字を LaTeX 用にする（% & # _ など）。数式（$...$）はそのまま。"""
+    import re
+    parts = re.split(r"(\$[^$]+\$)", text)
+    rep = {"%": r"\%", "&": r"\&", "#": r"\#", "_": r"\_", "~": r"\textasciitilde{}", "^": r"\^{}",
+           "\\": r"\textbackslash{}", "{": r"\{", "}": r"\}"}
+    out = []
+    for p in parts:
+        if p.startswith("$") and p.endswith("$") and len(p) > 1:
+            out.append(p)
+        else:
+            out.append("".join(rep.get(ch, ch) for ch in p))
+    return "".join(out)
+
+
+def tex_png(markup, size=18, color=INK, width=None, align="center", bold=False, preamble=""):
+    """markup（文と $数式$ の混在。LaTeX の数式の書き方）を lualatex で組み、透過 PNG のパスを返す。
+    width（インチ）を渡すとその幅で折り返す。結果は TEX_CACHE に保存して使い回す（1 回の組版は 2〜3 秒）。"""
+    os.makedirs(TEX_CACHE, exist_ok=True)
+    col = color.lstrip("#").upper()
+    key = hashlib.sha1(repr((markup, size, col, width, align, bold, preamble, 2)).encode()).hexdigest()[:20]
+    png = os.path.join(TEX_CACHE, key + ".png")
+    if os.path.exists(png):
+        return png
+    body = _tex_escape(markup)
+    lead = round(size * 1.42, 1)
+    al = {"center": r"\centering", "left": r"\raggedright", "right": r"\raggedleft"}[align]
+    src = (_TEX_HEAD % (f",varwidth={width}in" if width else "", preamble)
+           + rf"\fontsize{{{size}}}{{{lead}}}\selectfont\color[HTML]{{{col}}}{al} "
+           + (r"\bfseries\boldmath " if bold else "") + body + "\n\\end{document}\n")
+    with tempfile.TemporaryDirectory() as d:
+        open(os.path.join(d, "t.tex"), "w", encoding="utf-8").write(src)
+        r = subprocess.run([LUALATEX, "-interaction=nonstopmode", "-halt-on-error", "t.tex"], cwd=d,
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            log = r.stdout[-1500:]
+            raise RuntimeError(f"LaTeX の組版に失敗した: {markup!r}\n{log}")
+        # 図の解像度（100 dpi）の 2 倍で作り、置くときに半分にして輪郭をなめらかにする
+        subprocess.run([PDFTOCAIRO, "-png", "-r", "200", "-transp", "-singlefile", "t.pdf", "t"], cwd=d, check=True)
+        tmp = png + f".{os.getpid()}.tmp.png"
+        shutil.move(os.path.join(d, "t.png"), tmp)
+        os.replace(tmp, png)            # 並列の作業プロセスどうしで書き込みがぶつからないように
+    return png
+
+
+def tex_array(markup, size=18, color=INK, width=None, align="center", bold=False):
+    """tex_png() の画像を、図の 100 dpi に合わせた RGBA 配列で返す（メモリにも保存する）。"""
+    key = (markup, size, color, width, align, bold)
+    if key not in _TEX_MEM:
+        img = plt.imread(tex_png(markup, size, color, width, align, bold))
+        # 200 dpi → 100 dpi（2×2 の平均。透明度で重みづけ）
+        h, w = img.shape[0] // 2 * 2, img.shape[1] // 2 * 2
+        img = img[:h, :w].reshape(h // 2, 2, w // 2, 2, 4).mean(axis=(1, 3))
+        _TEX_MEM[key] = img
+    return _TEX_MEM[key]
+
+
+def _place(fig, img, x, y, ha="left", va="baseline"):
+    """RGBA 配列を図の座標 (x, y) に 1:1 の画素で置く。"""
+    H_, W_ = img.shape[:2]
+    px = x * fig.bbox.width - {"left": 0, "center": W_ / 2, "right": W_}[ha]
+    py = y * fig.bbox.height - {"bottom": 0, "baseline": 0, "center": H_ / 2, "top": H_}[va]
+    fig.figimage(img, xo=int(round(px)), yo=int(round(py)), origin="upper", zorder=5)
+
+
+def tex(fig, x, y, markup, size=18, color=INK, ha="left", va="center", width=None, align=None, bold=False, alpha=1.0):
+    """LaTeX で組んだ文・数式を図の座標 (x, y) に置く（fig.text の代わり）。
+    **形が変わらない式にだけ使う**（毎コマ数字が変わる文は fig.text。組版のたびに 2〜3 秒かかるため）。
+    LaTeX が使えないときは fig.text（mathtext）で描く。"""
+    if not USE_TEX:
+        fig.text(x, y, markup, fontsize=size, color=color, ha=ha, va=va, weight="bold" if bold else "normal")
+        return
+    if alpha <= 0:
+        return
+    img = tex_array(markup, size, color, width, align or ha if ha != "center" or width else "center", bold)
+    if alpha < 1:
+        img = img.copy()
+        img[..., 3] *= alpha
+    _place(fig, img, x, y, ha, va)
+
+
+def ftext(fig, x, y, s, **kw):
+    """$ を含む文は tex()、含まない文は fig.text で描く。fig.text の引数（fontsize, color, ha, va, weight）を受ける。"""
+    if USE_TEX and "$" in s:
+        tex(fig, x, y, s, size=kw.get("fontsize", 18), color=kw.get("color", INK), ha=kw.get("ha", "left"),
+            va=kw.get("va", "center"), bold=kw.get("weight") == "bold", alpha=kw.get("alpha", 1.0))
+    else:
+        fig.text(x, y, s, **kw)
+
+
 def box(fig, x, y, w, h, fc, ec="none", lw=1.5, r=0.012, z=-1):
     """図の座標（0〜1）で角丸の面を置く。既定では軸より下に描く（軸の背景は透明）。"""
     fig.add_artist(FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0,rounding_size={r}", fc=fc, ec=ec, lw=lw,
@@ -111,9 +227,17 @@ def frame_base(fig, title, caption):
         fig.add_artist(plt.Line2D([0.04, 0.96], [0.875, 0.875], color=NAVY, lw=2))
     if caption:
         box(fig, 0.03, 0.018, 0.94, 0.115, LIGHT, r=0.01, z=1)
-        lines = wrap_ja(caption, 44)
-        fig.text(0.5, 0.075, "\n".join(lines[:3]), fontsize=18 if len(lines) <= 2 else 15.5,
-                 color=INK, ha="center", va="center", linespacing=1.35)
+        caption = display(caption)
+        if USE_TEX:
+            # 字幕は LaTeX で組む（数式は $...$）。3 行になるときは小さくする
+            img = tex_array(caption, 18, INK, width=11.4)
+            if img.shape[0] > 0.80 * fig.dpi:
+                img = tex_array(caption, 15.5, INK, width=11.4)
+            _place(fig, img, 0.5, 0.075, "center", "center")
+        else:
+            lines = wrap_ja(caption, 44)
+            fig.text(0.5, 0.075, "\n".join(lines[:3]), fontsize=18 if len(lines) <= 2 else 15.5,
+                     color=INK, ha="center", va="center", linespacing=1.35)
 
 
 def which(cues, t):
@@ -144,7 +268,7 @@ def panel(fig, rows, x=0.67, y0=0.17, y1=0.85):
     for line, kw in rows:
         kw = dict(kw)
         dy = kw.pop("dy", 0.055)
-        fig.text(x + 0.02, y, line, va="top", **kw)
+        ftext(fig, x + 0.02, y, line, va="top", **kw)
         y -= dy
 
 
@@ -187,6 +311,24 @@ def tts(text, wav):
         return w.getnframes() / SR
 
 
+# ------------------------------------------------------------------ 台本
+def prepare(scenes, lexicon=None):
+    """台本を整える。lines の要素は「字幕だけの文字列」か「(字幕, 読み上げ)」。
+    字幕だけなら読み上げは yomi() で作る（$数式$ の読み、{表記|よみ}、lexicon.tsv と lexicon の辞書）。
+    (字幕, None) も同じ。作例ではモジュールの先頭で SCENES = prepare([...]) とする（並列の作業プロセスでも同じになる）。"""
+    lex = load_lexicon(lexicon)
+    for sc in scenes:
+        new = []
+        for ln in sc["lines"]:
+            if isinstance(ln, str):
+                new.append((display(ln), yomi(ln, lex)))
+            else:
+                cap, sp = ln
+                new.append((display(cap), sp if sp else yomi(cap, lex)))
+        sc["lines"] = new
+    return scenes
+
+
 # ------------------------------------------------------------------ 動画
 def no_data():
     return {}
@@ -198,7 +340,7 @@ class Video:
 
     def __init__(self, scenes, draws, build_data=None, out="video.mp4", build_dir=None, workers=5):
         assert len(scenes) == len(draws)
-        self.scenes, self.draws, self.build_data = scenes, draws, build_data or no_data
+        self.scenes, self.draws, self.build_data = prepare(scenes), draws, build_data or no_data
         self.out = os.path.abspath(out)
         self.build = build_dir or os.path.splitext(self.out)[0] + "_build"
         self.workers = workers
@@ -252,7 +394,12 @@ class Video:
         os.makedirs(d, exist_ok=True)
         for j, (_, e) in enumerate(cues):
             self.draws[k](fig, e - 0.05, cues, data)
-            fig.savefig(os.path.join(d, f"s{k}_{j}.png"), dpi=50)
+            # 等倍で描いてから半分に縮める（LaTeX の画像は画素で置くので、savefig の dpi を変えると大きさがずれる）
+            fig.canvas.draw()
+            img = np.asarray(fig.canvas.buffer_rgba())[:, :, :3].astype(float) / 255
+            h, w = img.shape[0] // 2 * 2, img.shape[1] // 2 * 2
+            img = img[:h, :w].reshape(h // 2, 2, w // 2, 2, 3).mean(axis=(1, 3))
+            plt.imsave(os.path.join(d, f"s{k}_{j}.png"), img)
         plt.close(fig)
         return k, dur
 
@@ -265,7 +412,27 @@ class Video:
                         "-c", "copy", self.out], check=True)
         return self.out
 
+    def speech(self, ks):
+        """各文の字幕と読み上げを並べて表示する（読みの確認用）。"""
+        for k in ks:
+            print(f"== 場面 {k}：{self.scenes[k].get('title')}")
+            for i, (cap, sp) in enumerate(self.scenes[k]["lines"]):
+                print(f"  [{i}] 字幕：{cap}\n      読み：{sp}")
+
+    def listen(self, k, i=None):
+        """場面 k（の文 i）を読み上げて再生する（macOS の afplay）。"""
+        lines = self.scenes[k]["lines"]
+        for j in ([i] if i is not None else range(len(lines))):
+            wav = os.path.join(self.build, f"listen_{k}_{j}.wav")
+            tts(lines[j][1], wav)
+            print(f"[{k}-{j}] {lines[j][1]}", flush=True)
+            subprocess.run(["afplay", wav])
+
     def main(self, args):
+        if args and args[0] == "speech":
+            return self.speech([int(a) for a in args[1:]] or range(len(self.scenes)))
+        if args and args[0] == "listen":
+            return self.listen(int(args[1]), int(args[2]) if len(args) > 2 else None)
         job = self.preview if args and args[0] == "preview" else self.render
         args = args[1:] if args and args[0] == "preview" else args
         ks = [int(a) for a in args] or list(range(len(self.scenes)))
